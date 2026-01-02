@@ -41,6 +41,7 @@
 #include "particle.h"
 #include "platform/gfx.h"
 #include "platform/input.h"
+#include "platform/audio.h"
 #include "world.h"
 
 #include "cNBT/nbt.h"
@@ -72,7 +73,12 @@ int main(void) {
 	blocks_init();
 	items_init();
 	recipe_init();
+
 	gfx_setup();
+	
+	audio_init();
+
+	audio_play_ambient("assets/music/ambiente_overworld.wav", 180);
 	gutil_init();
 
 	screen_set(&screen_select_world);
@@ -158,6 +164,7 @@ int main(void) {
 		if(gstate.current_screen->update)
 			gstate.current_screen->update(gstate.current_screen,
 										  gstate.stats.dt);
+		audio_update();								  
 
 		gfx_flip_buffers(&gstate.stats.dt_gpu, &gstate.stats.dt_vsync);
 
@@ -252,6 +259,7 @@ int main(void) {
 		input_poll();
 		gfx_finish(true);
 	}
+audio_shutdown();
 
 	return 0;
 }

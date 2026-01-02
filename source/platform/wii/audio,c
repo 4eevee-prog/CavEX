@@ -1,0 +1,152 @@
+#include "../audio.h"
+
+#ifdef PLATFORM_WII
+#include <asndlib.h>
+#include <ogc/mutex.h>
+#include <string.h>
+#include <stdio.h>
+
+#include "audio_wav.h"
+
+// Ajusta rutas como prefieras:
+#define ASSET_SFX_DIR   "assets/sfx/"
+#define ASSET_MUSIC_DIR "assets/music/"
+
+static wav_pcm_t sfx[SFX_COUNT];
+static bool sfx_loaded[SFX_COUNT];
+
+static wav_pcm_t amb;
+static bool amb_loaded = false;
+static int amb_voice = 0;
+static int amb_volume = 200;
+static volatile bool amb_playing = false;
+
+static void amb_cb(int voice){
+  (void)voice;
+  // Cuando termina, lo marcamos para relanzarlo en audio_update()
+  amb_playing = false;
+}
+
+static int voice_alloc = 1; // 0 reservado para ambiente (ejemplo)
+
+static int pick_voice(void){
+  int v = voice_alloc++;
+  if(voice_alloc > 15) voice_alloc = 1; // 16 voces típicas
+  return v;
+}
+
+static bool load_one_sfx(sfx_id id, const char* filename){
+  char path[256];
+  snprintf(path, sizeof(path), "%s%s", ASSET_SFX_DIR, filename);
+  if(!wav_load_pcm16(path, &sfx[id])) return false;
+  sfx_loaded[id] = true;
+  return true;
+}
+
+bool audio_init(void){
+  ASND_Init();
+  // Reservamos voz 0 para ambiente
+  memset(sfx_loaded, 0, sizeof(sfx_loaded));
+  amb_loaded = false;
+  amb_playing = false;
+
+  // Carga SFX (WAV PCM16 mono o estéreo)
+  // Cambia nombres a los tuyos:
+  load_one_sfx(SFX_GUI_CLICK, "gui_click.wav");
+  load_one_sfx(SFX_PLACE,     "place.wav");
+  load_one_sfx(SFX_BREAK,     "break.wav");
+  load_one_sfx(SFX_JUMP,      "jump.wav");
+  load_one_sfx(SFX_HIT,       "hit.wav");
+  load_one_sfx(SFX_ITEM_SWITCH,"item_switch.wav");
+
+  return true;
+}
+
+static void play_pcm(const wav_pcm_t* w, int voice, int vol){
+  if(!w || !w->data) return;
+  int fmt = (w->channels == 2) ? VOICE_STEREO_16BIT : VOICE_MONO_16BIT;
+
+  ASND_SetVoice(
+    voice,
+    fmt,
+    (int)w->sample_rate,
+    0,
+    w->data,
+    (int)w->data_size,
+    vol,
+    vol,
+    NULL
+  );
+}
+
+void audio_play_sfx(sfx_id id){
+  if(id < 0 || id >= SFX_COUNT) return;
+  if(!sfx_loaded[id]) return;
+
+  int v = pick_voice();
+  play_pcm(&sfx[id], v, 255);
+}
+
+void audio_play_ambient(const char* wav_path, int volume_0_255){
+  audio_stop_ambient();
+  amb_volume = volume_0_255;
+
+  if(!wav_load_pcm16(wav_path, &amb)) return;
+  amb_loaded = true;
+
+  // reproducimos una vez; al terminar, callback => audio_update lo reinicia
+  int fmt = (amb.channels == 2) ? VOICE_STEREO_16BIT : VOICE_MONO_16BIT;
+  ASND_SetVoice(
+    amb_voice,
+    fmt,
+    (int)amb.sample_rate,
+    0,
+    amb.data,
+    (int)amb.data_size,
+    amb_volume,
+    amb_volume,
+    amb_cb
+  );
+  amb_playing = true;
+}
+
+void audio_stop_ambient(void){
+  ASND_StopVoice(amb_voice);
+  amb_playing = false;
+  if(amb_loaded){
+    wav_free(&amb);
+    amb_loaded = false;
+  }
+}
+
+void audio_update(void){
+  // Loop “manual”: si terminó ambiente, lo relanzamos
+  if(amb_loaded && !amb_playing){
+    int fmt = (amb.channels == 2) ? VOICE_STEREO_16BIT : VOICE_MONO_16BIT;
+    ASND_SetVoice(
+      amb_voice,
+      fmt,
+      (int)amb.sample_rate,
+      0,
+      amb.data,
+      (int)amb.data_size,
+      amb_volume,
+      amb_volume,
+      amb_cb
+    );
+    amb_playing = true;
+  }
+}
+
+void audio_shutdown(void){
+  audio_stop_ambient();
+  for(int i=0;i<SFX_COUNT;i++){
+    if(sfx_loaded[i]){
+      wav_free(&sfx[i]);
+      sfx_loaded[i]=false;
+    }
+  }
+  ASND_End();
+}
+
+#endif
